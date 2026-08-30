@@ -1,0 +1,4 @@
+# 离线 TTS 运行时依赖
+sherpa-onnx>=1.10.0
+sounddevice>=0.4.6
+numpy>=1.21.0
