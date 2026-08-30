@@ -143,7 +143,7 @@ install_system_deps
 if [[ "${USE_VENV}" -eq 1 ]]; then
   if [[ ! -d "${VENV_DIR}" ]]; then
     echo "==> 创建虚拟环境: ${VENV_DIR}"
-    "${PYTHON_BIN}" -m venv "${VENV_DIR}"
+    "${PYTHON_BIN}" -m venv --system-site-packages "${VENV_DIR}"
   else
     echo "==> 复用虚拟环境: ${VENV_DIR}"
   fi

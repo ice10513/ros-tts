@@ -1,41 +1,44 @@
 # AGENTS.md
 
-面向本仓库的 Agent 说明。修改代码前先读 `speaker.py` 与 `tts-models/` 的实际路径，不要假设已存在 ROS 节点或 VITS 模型。
+面向本仓库的 Agent 说明。改代码前先看 `ros_tts/`、`speaker.py` 和 `tts-models/` 的实际路径。
 
 ## 项目是什么
 
-独立离线 TTS 脚本：用 `sherpa-onnx` 加载本地 ONNX 模型，用 `sounddevice` 播放。仓库名含 `ros`，但当前没有 `package.xml`、launch 或 ROS 节点。
+ROS 2 Humble 的离线 TTS 包（`ament_python`，包名 `ros_tts`）。节点持久运行，订阅 `std_msgs/String`，把文字排队合成并播放。CLI `speaker.py` 仍可单独试听。
 
-入口：`speaker.py`。模型根目录：`tts-models/`（相对脚本文件，不要改成 cwd 相对路径）。
+默认节点名 `tts_speaker`，默认 topic `/tts/text`，两者都可配置，不要写死。
 
 ## 目录约定
 
-- `speaker.py`：CLI 与引擎实现，保持单文件，除非明确要求拆包。
-- `tts-models/matcha-icefall-zh-en/`：Matcha 声学模型、`tokens.txt`、`lexicon.txt`、`espeak-ng-data/`。
-- `tts-models/vocos-16khz-univ.onnx`：Matcha 必需的 vocoder。
-- `tts-models/vits-piper-zh_CN-huayan-medium/`：可选 VITS；目录不存在则跳过，不要当硬错误。
-- `requirements.txt` / `deploy.sh`：依赖清单与安装入口。不要把依赖写死在文档里却不更新这两个文件。
+- `ros_tts/tts_engine.py`：VITS / Matcha 引擎与模型路径解析。
+- `ros_tts/speaker_node.py`：ROS 2 节点；播放在后台线程，不要在回调里 `sd.wait()`。
+- `launch/tts.launch.py`、`config/speaker.yaml`：节点名、topic 等启动配置。
+- `speaker.py`：命令行入口，复用 `tts_engine`，不要把引擎再复制一份。
+- `tts-models/matcha-icefall-zh-en/`：Matcha 模型、`tokens.txt`、`lexicon.txt`、`espeak-ng-data/`。
+- `tts-models/vocos-16khz-univ.onnx`：Matcha vocoder，在 `tts-models/` 根下。
+- `tts-models/vits-piper-zh_CN-huayan-medium/`：可选；不存在则跳过。
+- `requirements.txt` / `deploy.sh`：Python 依赖。新增依赖必须同步这两个文件。
 
 不要提交或改动 `espeak-ng-data/` 下的语音数据，除非任务就是更新模型。
 
 ## 运行与依赖
 
-- Python >= 3.8。推荐 `.venv`，由 `./deploy.sh` 创建。
+- ROS 2 Humble + Python 3.10。`ros2 run` 用系统解释器，该解释器上要能 `import sherpa_onnx` 和 `rclpy`。
 - pip：`sherpa-onnx`、`sounddevice`、`numpy`。
-- 系统：`libportaudio2`（播放）、`wget`（Matcha 缺 vocoder 时下载）。
-- 当前引擎 `provider="cpu"`、`num_threads=4`。不要默认改成 CUDA，除非用户要求并同步安装说明。
+- 系统：`libportaudio2`；WSL 无 ALSA 设备时可走 `ffplay` + Pulse。
+- 引擎 `provider="cpu"`、`num_threads=4`。不要默认改 CUDA。
 
 ## 改代码时
 
-- 保持 VITS / Matcha 两条引擎路径独立；一方失败不应阻止另一方加载。
-- 模型路径一律 `os.path.join(MODEL_DIR, ...)`。Matcha vocoder 在 `tts-models/` 根下，不在子目录里。
-- `synthesize()` 目前直接 `sd.play` + `sd.wait`，忽略 `output_file`。若加导出 wav，保留现有播放行为，或提供明确开关。
-- 语速默认 `SPEED = 1.0`。Matcha 配置不要丢掉 `lexicon` 与 `data_dir`。
-- 新增依赖必须写入 `requirements.txt`，并在 `README.md` 提一句。
+- 节点名用 launch 参数 `node_name`（以及 `-r __node:=`）。topic 用参数 `text_topic`，不要写死订阅名。
+- 正在播放时新消息入队，不要打断、不要丢弃。
+- VITS / Matcha 加载失败互不影响。ROS 节点 `engine:=auto` 时只选一个（优先 Matcha）。
+- 模型路径用 `resolve_model_dir()` / 参数 `model_dir`，Matcha vocoder 在 `tts-models/` 根下。
+- 语速默认 `1.0`。Matcha 配置保留 `lexicon` 与 `data_dir`。
 
 ## 不要做的事
 
-- 不要把大模型（`.onnx`、lexicon、espeak 数据）重新生成或替换，除非用户明确要求。
-- 不要引入在线 TTS API；本项目约束是离线合成。
-- 不要在未确认的情况下把脚本改成 ROS2 节点；若要接入 ROS，新增节点文件，保留 CLI。
-- 不要添加与 TTS 无关的重构、格式化全文件或新文档。
+- 不要替换大模型（`.onnx`、lexicon、espeak 数据），除非用户明确要求。
+- 不要引入在线 TTS API。
+- 不要删掉 CLI。
+- 不要把大模型复制进 `install/`，除非用户要求。

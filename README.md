@@ -1,69 +1,108 @@
 # ros-tts
 
-离线中文（及中英混合）语音合成。基于 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)，本地加载 ONNX 模型后用系统音频设备播放。
+离线中文（及中英混合）语音合成。基于 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)。
 
-当前是独立 Python 脚本，尚未封装为 ROS 节点。
+这是 ROS 2 Humble 包 `ros_tts`：节点启动后一直运行，别人往 topic 发文字即可排队播放。命令行脚本 `speaker.py` 仍可单独试听。
 
 ## 功能
 
-- **Matcha**（默认可用）：`tts-models/matcha-icefall-zh-en` + `vocos-16khz-univ.onnx`
-- **VITS**（可选）：若存在 `tts-models/vits-piper-zh_CN-huayan-medium` 则一并加载
-- CPU 推理；命令行传入文本，依次用已加载引擎朗读
+- **Matcha**（默认）：`tts-models/matcha-icefall-zh-en` + `vocos-16khz-univ.onnx`
+- **VITS**（可选）：存在 `tts-models/vits-piper-zh_CN-huayan-medium` 时可用
+- CPU 推理；正在播放时新句子入队，说完再接下一句
 
 ## 环境要求
 
-- Linux（含 WSL2）
-- Python 3.8+
-- 可播放声音的音频设备（WSL 需 WSLg / PulseAudio 正常工作）
-- 系统库：`libportaudio2`（`sounddevice`）、`wget`（缺失 vocoder 时自动下载）
+- ROS 2 Humble
+- Python 3.10（Humble 默认）
+- 可播放声音的设备（WSL 需 WSLg / PulseAudio；无 ALSA 时会尝试 `ffplay`）
+- 系统库：`libportaudio2`、`wget`
 
-## 安装
-
-在仓库根目录执行：
+## 安装 Python 依赖
 
 ```bash
 chmod +x deploy.sh
-./deploy.sh
+./deploy.sh --mirror aliyun
 ```
 
-脚本会：
-
-1. 安装系统包（`python3-venv`、`libportaudio2`、`libsndfile1`、`wget` 等，已安装则跳过）
-2. 创建 `.venv`
-3. 按 `requirements.txt` 安装 `sherpa-onnx`、`sounddevice`、`numpy`
-4. 校验 `import`
-
-常用参数：
+`ros2 run` 走系统 Python，需要在该解释器上也能导入 TTS 库：
 
 ```bash
-./deploy.sh --mirror tsinghua    # 清华 PyPI 镜像（可选 aliyun / tencent）
-./deploy.sh --no-venv            # 装到当前 Python，不建虚拟环境
-./deploy.sh --skip-system        # 跳过 apt
-./deploy.sh --python python3.11  # 指定解释器
+source /opt/ros/humble/setup.bash
+python3 -m pip install --user -r requirements.txt
 ```
 
-手动安装等价于：
+## 构建
+
+在本仓库根目录（包就在这里，不必再套一层 `src/`）：
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+source /opt/ros/humble/setup.bash
+colcon build --paths . --symlink-install
+source install/setup.bash
 ```
 
-Debian/Ubuntu 若播放报错，可先安装：
+## ROS 2 节点
+
+默认节点名 **`tts_speaker`**，默认 topic **`/tts/text`**（`std_msgs/String`）。两者都可以改。
 
 ```bash
-sudo apt-get install -y libportaudio2 libsndfile1
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch ros_tts tts.launch.py
 ```
 
-## 使用
+发文字：
+
+```bash
+ros2 topic pub --once /tts/text std_msgs/msg/String "{data: '你好，这是语音合成测试'}"
+```
+
+### 配置节点名和 topic
+
+Launch 参数：
+
+```bash
+ros2 launch ros_tts tts.launch.py \
+  node_name:=robot_tts \
+  text_topic:=/robot/speak
+```
+
+`ros2 run`：
+
+```bash
+ros2 run ros_tts speaker_node --ros-args \
+  -r __node:=robot_tts \
+  -p text_topic:=/robot/speak \
+  -p engine:=auto \
+  -p speed:=1.0
+```
+
+其它参数：
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `node_name` | `tts_speaker` | 节点名（launch 参数；run 时用 `-r __node:=`） |
+| `text_topic` | `/tts/text` | 文字 topic |
+| `engine` | `auto` | `auto` / `matcha` / `vits` |
+| `model_dir` | 自动查找 | `tts-models` 路径 |
+| `speed` | `1.0` | 语速 |
+
+也可改 `config/speaker.yaml`（用 `/**:` 写参数，换节点名仍然生效），然后：
+
+```bash
+ros2 launch ros_tts tts.launch.py params_file:=/绝对路径/speaker.yaml
+```
+
+环境变量 `ROS_TTS_MODEL_DIR` 可覆盖模型目录。
+
+## 命令行试听
 
 ```bash
 source .venv/bin/activate
 python speaker.py "你好，这是语音合成测试"
 ```
 
-无参数时打印用法。脚本会检测 `tts-models/` 下已有模型，加载成功的引擎会各朗读一遍。
+会加载所有已就位的引擎并各读一遍。
 
 ## 模型布局
 
@@ -83,26 +122,23 @@ tts-models/
 
 Matcha 声学模型来源：[ModelScope matcha_tts_zh_en](https://modelscope.cn/models/dengcunqin/matcha_tts_zh_en_20251010/summary)。
 
-若缺少 vocoder，首次加载 Matcha 时会从 GitHub 下载到 `tts-models/vocos-16khz-univ.onnx`。也可手动下载：
-
-- https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos-16khz-univ.onnx
-- https://modelscope.cn/models/dengcunqin/matcha_tts_zh_en_20251010/resolve/master/vocos-16khz-univ.onnx
-
-VITS Piper 华严模型需自行放到上述目录，缺失时只跑 Matcha。
+缺少 vocoder 时，首次加载 Matcha 会下载到 `tts-models/vocos-16khz-univ.onnx`。
 
 ## 项目结构
 
 | 路径 | 说明 |
 |------|------|
-| `speaker.py` | TTS 引擎与命令行入口 |
+| `ros_tts/speaker_node.py` | ROS 2 节点 |
+| `ros_tts/tts_engine.py` | TTS 引擎 |
+| `launch/tts.launch.py` | 启动文件 |
+| `config/speaker.yaml` | 默认参数 |
+| `speaker.py` | 命令行入口 |
 | `tts-models/` | 本地 ONNX 与词典 |
-| `requirements.txt` | Python 依赖 |
-| `deploy.sh` | 部署 / 安装依赖 |
-| `AGENTS.md` | 给 Agent 的仓库约定 |
+| `package.xml` / `setup.py` | ament_python 包 |
 
 ## 故障排除
 
-- **未找到可用模型**：确认 `tts-models/matcha-icefall-zh-en` 存在且含 `model-steps-3.onnx`。
-- **Matcha 配置验证失败**：检查 vocoder 是否在 `tts-models/vocos-16khz-univ.onnx`（不是子目录内）。
-- **sounddevice / PortAudio 错误**：安装 `libportaudio2`；WSL 下确认 Windows 宿主能出声。
-- **合成失败（空音频）**：换一句更短、含中文或中英混合的文本再试。
+- **未找到可用模型**：确认 `tts-models/matcha-icefall-zh-en` 存在；或设 `model_dir` / `ROS_TTS_MODEL_DIR`。
+- **Matcha 配置验证失败**：vocoder 须在 `tts-models/vocos-16khz-univ.onnx`。
+- **sounddevice / PortAudio Error querying device -1**：WSL 上 PortAudio 往往看不到 Pulse。节点会尝试 `ffplay`。要让 `sounddevice` 直接出声可安装 `libasound2-plugins`。
+- **`ModuleNotFoundError: sherpa_onnx`**：`ros2 run` 没用到 `.venv`，需对系统 Python `pip install --user -r requirements.txt`。
